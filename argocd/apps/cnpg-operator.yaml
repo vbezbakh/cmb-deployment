@@ -6,6 +6,9 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    # Diff against what the API server would apply, so defaulted CRD fields don't show
+    # up as drift (pairs with ServerSideApply below).
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:
