@@ -1,12 +1,10 @@
 # minikube on a laptop (see scripts/bootstrap.sh). Argo CD in the cluster tracks this file.
 # image.tag/digest are updated by cmb-application CI on every merge to main.
 image:
-  tag: 15aa66b244b46b69f9cf5c30550d8838f8be2878
-  digest: sha256:075771f320b796255b6ab8916a85a88eb25aa4de95750f1b214e5e6c3bd63458
-
+  tag: 80bef888cd45eef6e4162e8f22c1d91959a67c19
+  digest: sha256:dda8c6ccc952bb2c50b451b4daa7c98626e87f7f5d941ff188c6ff311c36cc25
 config:
   LOG_LEVEL: INFO
-
 workloads:
   api:
     resources:
@@ -37,6 +35,5 @@ workloads:
     autoscaling:
       minReplicas: 1
       maxReplicas: 3
-
 ingress:
   host: ""
