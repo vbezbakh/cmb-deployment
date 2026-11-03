@@ -1,0 +1,204 @@
+# Defaults are production-shaped; environments/*.yaml override what differs.
+
+image:
+  repository: ghcr.io/vbezbakh/cmb-application
+  # Set per environment by CI to the full commit SHA. Required.
+  tag: ""
+  # Set per environment by CI. When present the image is pulled by digest, so a re-pushed
+  # tag can never change what is running.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Secret with DATABASE_URL, DATABASE_READ_URL (optional) and WEBHOOK_SIGNING_SECRET.
+# In real clusters External Secrets creates it (externalSecret.enabled); locally the bootstrap
+# script does. The chart never contains secret values.
+secret:
+  name: cmb-app-secrets
+
+externalSecret:
+  enabled: false
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: cloud-secret-manager
+  # Secret key -> key in the cloud secret manager.
+  remoteKeys:
+    DATABASE_URL: cmb-app/database-url
+    DATABASE_READ_URL: cmb-app/database-read-url
+    WEBHOOK_SIGNING_SECRET: cmb-app/payments-webhook-signing-secret
+
+# Non-secret settings shared by every workload (see app/config.py in cmb-application).
+config:
+  LOG_LEVEL: INFO
+  # PgBouncer runs in transaction mode, which cannot route named prepared statements.
+  DB_STATEMENT_CACHE_SIZE: "0"
+  DB_ACQUIRE_TIMEOUT_SECONDS: "2"
+  DB_COMMAND_TIMEOUT_SECONDS: "5"
+  # Longer than the ingress controller's upstream keep-alive (60s), so the proxy never
+  # reuses a connection the app has just closed (a classic source of sporadic 502s).
+  KEEP_ALIVE_SECONDS: "75"
+  # Must fit inside terminationGracePeriodSeconds together with the preStop sleep.
+  GRACEFUL_SHUTDOWN_SECONDS: "25"
+
+# Graceful shutdown: on pod deletion the endpoint is removed asynchronously, so the pod keeps
+# serving for preStopSleepSeconds while load balancers catch up, then uvicorn drains
+# in-flight requests for up to GRACEFUL_SHUTDOWN_SECONDS. 10 + 25 < 45.
+terminationGracePeriodSeconds: 45
+preStopSleepSeconds: 10
+
+# Spread replicas across zones and nodes. Production sets zone to DoNotSchedule.
+topologySpread:
+  zone: ScheduleAnyway
+  node: ScheduleAnyway
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Long-running HTTP workloads. Same image, different COMPONENT.
+workloads:
+  api:
+    enabled: true
+    # Only used when autoscaling is disabled.
+    replicas: 2
+    env:
+      DB_POOL_MIN_SIZE: "2"
+      DB_POOL_MAX_SIZE: "10"
+    secretEnv: [DATABASE_URL, DATABASE_READ_URL]
+    # No CPU limit on purpose: a single-process Python server that is throttled by CFS quota
+    # shows up as latency spikes, not as a clear signal. Memory is limited.
+    resources:
+      requests:
+        cpu: 500m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 6
+      maxReplicas: 40
+      targetCPUUtilizationPercentage: 60
+      # Scale up fast for the evening ramp, scale down slowly so a dip doesn't cause flapping.
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          selectPolicy: Max
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 10
+              periodSeconds: 60
+    pdb:
+      maxUnavailable: 1
+
+  webhooks:
+    enabled: true
+    replicas: 2
+    env:
+      DB_POOL_MIN_SIZE: "1"
+      DB_POOL_MAX_SIZE: "5"
+    secretEnv: [DATABASE_URL, WEBHOOK_SIGNING_SECRET]
+    resources:
+      requests:
+        cpu: 100m
+        memory: 192Mi
+      limits:
+        memory: 384Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 60
+      behavior: {}
+    pdb:
+      maxUnavailable: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  # Empty host matches any host (used locally).
+  host: api.example.com
+  annotations: {}
+  tls: []
+  # Public paths. Everything else (/metrics, /healthz/*, /docs) stays cluster-internal.
+  paths:
+    - path: /api
+      workload: api
+    - path: /webhooks
+      workload: webhooks
+
+# Daily batch job (python -m app.batch). Safe to re-run; see app/batch.py.
+batch:
+  enabled: true
+  schedule: "30 3 * * *"
+  timeZone: Etc/UTC
+  # If the controller misses the slot (e.g. during a control-plane upgrade), still run
+  # within the next hour rather than skipping the day.
+  startingDeadlineSeconds: 3600
+  activeDeadlineSeconds: 3600
+  backoffLimit: 2
+  secretEnv: [DATABASE_URL]
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# Schema migrations run as a pre-install/pre-upgrade hook (Argo CD runs it as PreSync),
+# so new code never starts against an old schema.
+migrations:
+  enabled: true
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+probes:
+  # Startup budget is longer than DB_STARTUP_TIMEOUT_SECONDS (60s) so a pod that starts during
+  # a database failover gets the chance to connect instead of being restarted.
+  startup:
+    periodSeconds: 2
+    failureThreshold: 45
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 2
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Requires the Prometheus Operator CRDs.
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+  prometheusRule:
+    enabled: false
+  # Extra labels so the cluster's Prometheus selects these objects.
+  labels: {}

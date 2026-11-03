@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cmb-app
+description: FastAPI service with separate API and payment-webhook workloads, a daily batch CronJob and pre-deploy schema migrations.
+type: application
+version: 0.1.0
+# The application version is not tracked here: every environment pins its own image tag and digest.
+appVersion: "per-environment"
+kubeVersion: ">=1.30.0-0"

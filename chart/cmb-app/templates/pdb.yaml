@@ -1,0 +1,20 @@
+{{- range $name, $w := .Values.workloads }}
+{{- if and $w.enabled $w.pdb }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cmb-app.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "cmb-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  maxUnavailable: {{ $w.pdb.maxUnavailable }}
+  # Let node drains evict pods that are already broken instead of blocking on them.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "cmb-app.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}

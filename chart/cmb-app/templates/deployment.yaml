@@ -1,0 +1,94 @@
+{{- range $name, $w := .Values.workloads }}
+{{- if $w.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cmb-app.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "cmb-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  {{- if not $w.autoscaling.enabled }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below current capacity during a rollout.
+      maxSurge: 25%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "cmb-app.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "cmb-app.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "cmb-app.fullname" $ }}
+      {{- include "cmb-app.podBase" $ | nindent 6 }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: {{ $.Values.topologySpread.zone }}
+          labelSelector:
+            matchLabels:
+              {{- include "cmb-app.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $name }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ $.Values.topologySpread.node }}
+          labelSelector:
+            matchLabels:
+              {{- include "cmb-app.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $name }}
+      containers:
+        - name: app
+          {{- include "cmb-app.containerBase" $ | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: COMPONENT
+              value: {{ $name }}
+            {{- range $key, $value := $w.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- include "cmb-app.secretEnv" (dict "root" $ "keys" $w.secretEnv) | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: {{ $.Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ $.Values.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: {{ $.Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: {{ $.Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.liveness.failureThreshold }}
+          lifecycle:
+            preStop:
+              # Native sleep action (no shell needed in the image).
+              sleep:
+                seconds: {{ $.Values.preStopSleepSeconds }}
+          resources:
+            {{- toYaml $w.resources | nindent 12 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+{{- range $name, $w := .Values.workloads }}
+{{- if $w.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cmb-app.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "cmb-app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "cmb-app.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}
+{{- end }}
