@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Database failover: kill the Postgres primary while the API is taking writes.
+# Database failover: crash the Postgres primary (force-delete, like a node dying) while the
+# API is taking writes. A plain delete would trigger a *graceful* shutdown, where Postgres waits
+# up to smartShutdownTimeout for clients to disconnect before CloudNativePG fails over.
 # CloudNativePG promotes a replica; PgBouncer reconnects to the new primary. The app answers
 # 503 + Retry-After for the few seconds the primary is gone (never 500), and no app pod
 # restarts, because liveness and readiness deliberately do not depend on the database.
@@ -7,13 +9,19 @@
 source "$(dirname "$0")/../lib.sh"
 
 old=$(current_primary)
-step "Current primary: $old. Sending 20 writes/s for 60s and deleting it after 10s"
+step "Current primary: $old. Sending 20 writes/s for 60s and crashing it after 10s"
 (
   sleep 10
-  kubectl -n "$DB_NS" delete pod "$old" --wait=false >/dev/null
+  kubectl -n "$DB_NS" delete pod "$old" --grace-period=0 --force >/dev/null 2>&1
   start=$SECONDS
-  info "deleted $old"
-  until new=$(current_primary) && [[ -n "$new" && "$new" != "$old" ]]; do sleep 1; done
+  info "crashed $old"
+  until new=$(current_primary) && [[ -n "$new" && "$new" != "$old" ]]; do
+    ((SECONDS - start > 120)) && {
+      info "no new primary after 120s"
+      exit 1
+    }
+    sleep 1
+  done
   info "new primary: $new (promoted after ~$((SECONDS - start))s)"
 ) &
 load failover-load -qps 20 -c 4 -t 60s \
