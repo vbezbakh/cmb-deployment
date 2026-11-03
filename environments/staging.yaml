@@ -1,0 +1,33 @@
+# Staging: production-shaped, smaller. Auto-deployed on every merge to cmb-application main.
+image:
+  tag: 0ece522e35cbf223649dbd56234e2efce9fbce6a
+  digest: sha256:32f69619fc9988b5d2c54d5bf113260bad849a083242a0d61090d2e7b6bd2057
+
+externalSecret:
+  enabled: true
+  remoteKeys:
+    DATABASE_URL: cmb-app-staging/database-url
+    DATABASE_READ_URL: cmb-app-staging/database-read-url
+    WEBHOOK_SIGNING_SECRET: cmb-app-staging/payments-webhook-signing-secret
+
+workloads:
+  api:
+    autoscaling:
+      minReplicas: 2
+      maxReplicas: 6
+  webhooks:
+    autoscaling:
+      minReplicas: 2
+      maxReplicas: 3
+
+ingress:
+  host: api.staging.example.com
+  tls:
+    - secretName: cmb-app-staging-tls
+      hosts: [api.staging.example.com]
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true

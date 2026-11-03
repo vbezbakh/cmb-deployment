@@ -1,0 +1,43 @@
+# Production. image.tag/digest change only through a reviewed promotion PR
+# (.github/workflows/promote.yml copies them from staging).
+image:
+  tag: 0ece522e35cbf223649dbd56234e2efce9fbce6a
+  digest: sha256:32f69619fc9988b5d2c54d5bf113260bad849a083242a0d61090d2e7b6bd2057
+
+externalSecret:
+  enabled: true
+  remoteKeys:
+    DATABASE_URL: cmb-app-prod/database-url
+    DATABASE_READ_URL: cmb-app-prod/database-read-url
+    WEBHOOK_SIGNING_SECRET: cmb-app-prod/payments-webhook-signing-secret
+
+# Hard requirement: never put all replicas of a workload in one zone.
+topologySpread:
+  zone: DoNotSchedule
+
+# Sized from the brief: ~3k req/s at the evening peak, ~300 req/s overnight. Assumes roughly
+# 200 req/s per API pod at the 60% CPU target, which must be confirmed with a load test.
+# minReplicas 6 = 2 per zone, which also absorbs the overnight load with headroom.
+workloads:
+  api:
+    autoscaling:
+      minReplicas: 6
+      maxReplicas: 40
+  webhooks:
+    autoscaling:
+      minReplicas: 3
+      maxReplicas: 10
+
+ingress:
+  host: api.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 1m
+  tls:
+    - secretName: cmb-app-prod-tls
+      hosts: [api.example.com]
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
