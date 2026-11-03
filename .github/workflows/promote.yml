@@ -1,0 +1,68 @@
+name: Promote
+
+# Promotion = a pull request that copies the exact image (tag + digest) running in the source
+# environment into the target environment's values file. Merging it is the deploy approval;
+# reverting it is the rollback. Nothing is rebuilt, so prod runs the bytes staging tested.
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Source environment
+        type: choice
+        options: [staging]
+        default: staging
+      to:
+        description: Target environment
+        type: choice
+        options: [prod]
+        default: prod
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open the promotion pull request
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          GH_TOKEN: ${{ github.token }}
+          APP_REPO: ${{ github.server_url }}/${{ github.repository_owner }}/cmb-application
+        run: |
+          tag=$(yq '.image.tag' "environments/${FROM}.yaml")
+          digest=$(yq '.image.digest' "environments/${FROM}.yaml")
+          current=$(yq '.image.tag' "environments/${TO}.yaml")
+          if [[ "$tag" == "$current" ]]; then
+            echo "::notice::${TO} already runs ${tag::7}; nothing to promote."
+            exit 0
+          fi
+
+          export tag digest
+          yq -i '.image.tag = strenv(tag) | .image.digest = strenv(digest)' "environments/${TO}.yaml"
+
+          branch="promote/${TO}-${tag::7}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Promote cmb-application ${tag::7} from ${FROM} to ${TO}"
+          git push --force-with-lease -u origin "$branch"
+
+          gh pr create --base main --head "$branch" \
+            --title "Promote cmb-application ${tag::7} to ${TO}" \
+            --body "$(cat <<EOF
+          Promotes the image currently running in **${FROM}** to **${TO}**.
+
+          | | |
+          |---|---|
+          | Image | \`ghcr.io/${GITHUB_REPOSITORY_OWNER}/cmb-application:${tag}\` |
+          | Digest | \`${digest}\` |
+          | Changes | ${APP_REPO}/compare/${current}...${tag} |
+
+          Before merging: check ${FROM} dashboards and alerts since this version rolled out.
+          Rollback: revert this pull request.
+          EOF
+          )"
