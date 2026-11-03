@@ -1,0 +1,40 @@
+# Wave 2: the application, rendered from the Helm chart with the local environment values.
+# Staging and prod clusters run the same Application pointing at their own values file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cmb-app
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vbezbakh/cmb-deployment.git
+    targetRevision: main
+    path: chart/cmb-app
+    helm:
+      releaseName: cmb-app
+      valueFiles:
+        - ../../environments/local.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cmb
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+  # The autoscaler owns replica counts.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

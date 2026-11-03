@@ -1,0 +1,67 @@
+# Argo CD Helm chart values for the local cluster (chart argo/argo-cd 10.11.6, Argo CD v3.5.6).
+# Trimmed to fit a laptop: no SSO, no notifications, single replicas.
+
+configs:
+  params:
+    # TLS is terminated by kubectl port-forward locally; a real cluster puts the UI behind
+    # the ingress with TLS and SSO.
+    server.insecure: true
+  cm:
+    # Poll Git every minute (default 2m) so local demos converge quickly. Real clusters use a
+    # GitHub webhook instead, which a laptop cannot receive.
+    timeout.reconciliation: 60s
+    timeout.reconciliation.jitter: 10s
+    # Report child Application health to the root app, so sync waves in argocd/apps/
+    # actually wait (operator -> database -> app) instead of applying everything at once.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+applicationSet:
+  replicas: 0
+
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
