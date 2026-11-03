@@ -37,7 +37,8 @@ kubectl apply -f "$ROOT/argocd/root.yaml" >/dev/null
 ok "root app applied; everything else is synced from github.com/vbezbakh/cmb-deployment"
 
 step "5/6 sync (operator -> database -> app)"
-wait_for "root app registered children" 120 kubectl -n "$ARGO_NS" get application cmb-app
+# Each Application only appears once the previous wave is healthy, so a missing app simply
+# counts as "not ready yet".
 for app in cnpg-operator database cmb-app; do
   wait_for "$app synced and healthy" 900 app_healthy "$app"
 done
