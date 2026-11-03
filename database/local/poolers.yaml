@@ -1,0 +1,37 @@
+# PgBouncer in front of Postgres. Every app pod keeps its own pool, so at peak
+# (40 API pods x 10 + 10 webhook pods x 5 = 450 client connections) the database would run
+# out of connections. PgBouncer multiplexes those onto a small server-side pool.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: cmb-pg-pooler-rw
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  cluster:
+    name: cmb-pg
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "20"
+---
+# Read-only traffic (the list endpoint) goes to the replicas.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: cmb-pg-pooler-ro
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  cluster:
+    name: cmb-pg
+  instances: 1
+  type: ro
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "500"
+      default_pool_size: "10"

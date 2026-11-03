@@ -1,0 +1,37 @@
+# One primary and two streaming replicas. CloudNativePG handles failover: delete the primary
+# pod and a replica is promoted within seconds (see the failover demo in the README).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cmb-pg
+  annotations:
+    # The CRD is installed by the cnpg-operator app in an earlier wave.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      # Created by scripts/bootstrap.sh; never committed.
+      secret:
+        name: cmb-pg-app-credentials
+  storage:
+    size: 1Gi
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: 64MB
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      memory: 384Mi
+  affinity:
+    # Preferred, not required: minikube has a single node. A real cluster would require
+    # instances on different nodes and zones.
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
