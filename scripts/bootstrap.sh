@@ -26,11 +26,16 @@ step "2/6 secrets (generated locally, never committed)"
 "$ROOT/scripts/create-secrets.sh"
 
 step "3/6 Argo CD"
-helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
-helm upgrade --install argocd argo/argo-cd --version "$ARGOCD_CHART_VERSION" \
-  --namespace "$ARGO_NS" --create-namespace \
-  --values "$ROOT/argocd/values.yaml" --wait --timeout 10m >/dev/null
-ok "Argo CD installed"
+if helm list -n "$ARGO_NS" --filter '^argocd$' --output yaml 2>/dev/null |
+  grep -q "chart: argo-cd-${ARGOCD_CHART_VERSION}$"; then
+  ok "Argo CD ${ARGOCD_CHART_VERSION} already installed"
+else
+  helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
+  helm upgrade --install argocd argo/argo-cd --version "$ARGOCD_CHART_VERSION" \
+    --namespace "$ARGO_NS" --create-namespace \
+    --values "$ROOT/argocd/values.yaml" --wait --timeout 10m >/dev/null
+  ok "Argo CD installed"
+fi
 
 step "4/6 hand over to Git"
 kubectl apply -f "$ROOT/argocd/root.yaml" >/dev/null
