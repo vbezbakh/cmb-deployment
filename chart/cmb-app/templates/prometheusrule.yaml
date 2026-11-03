@@ -1,0 +1,140 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $name := include "cmb-app.fullname" . }}
+{{- $api := printf "namespace=\"%s\", route=~\"/api/.*\"" $ns }}
+{{- $hooks := printf "namespace=\"%s\", route=\"/webhooks/payments\"" $ns }}
+# severity=page  -> wakes someone up: users or payments are affected right now.
+# severity=ticket -> next business day: degradation, capacity, or a job that can be re-run.
+# The API SLO is 99.9% of requests succeed; page alerts use multi-window burn rates so they
+# fire fast on real outages but ignore short blips.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cmb-app.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ $name }}.recording
+      rules:
+        - record: cmb:api_error_ratio:rate5m
+          expr: |
+            sum(rate(http_requests_total{ {{- $api }}, status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{ {{- $api }}}[5m])), 1e-9)
+        - record: cmb:api_error_ratio:rate1h
+          expr: |
+            sum(rate(http_requests_total{ {{- $api }}, status=~"5.."}[1h]))
+            / clamp_min(sum(rate(http_requests_total{ {{- $api }}}[1h])), 1e-9)
+        - record: cmb:api_error_ratio:rate6h
+          expr: |
+            sum(rate(http_requests_total{ {{- $api }}, status=~"5.."}[6h]))
+            / clamp_min(sum(rate(http_requests_total{ {{- $api }}}[6h])), 1e-9)
+
+    - name: {{ $name }}.page
+      rules:
+        - alert: CmbApiErrorBudgetBurnFast
+          # 14.4x burn: at this rate the whole 30-day error budget is gone in ~2 days.
+          expr: cmb:api_error_ratio:rate1h > (14.4 * 0.001) and cmb:api_error_ratio:rate5m > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: page
+          annotations:
+            summary: API is failing more than 1.4% of requests
+            runbook: Check recent deploys (Argo CD history), database health (CNPG / managed DB), and pod restarts.
+
+        - alert: CmbApiLatencyHigh
+          expr: |
+            histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{ {{- $api }}}[5m]))) > 1
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: API p99 latency above 1s for 10 minutes
+
+        - alert: CmbApiCapacityLow
+          expr: |
+            kube_deployment_status_replicas_available{namespace="{{ $ns }}", deployment="{{ $name }}-api"}
+            / kube_deployment_spec_replicas{namespace="{{ $ns }}", deployment="{{ $name }}-api"} < 0.5
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: Fewer than half of the API replicas are available
+
+        - alert: CmbPaymentWebhooksFailing
+          # The provider retries, so a few minutes of errors are survivable; 15 minutes means
+          # payments are not being recorded and subscriptions will not activate.
+          expr: |
+            sum(rate(http_requests_total{ {{- $hooks }}, status=~"5.."}[10m]))
+            / clamp_min(sum(rate(http_requests_total{ {{- $hooks }}}[10m])), 1e-9) > 0.05
+          for: 15m
+          labels:
+            severity: page
+          annotations:
+            summary: More than 5% of payment webhooks are failing
+
+        - alert: CmbPaymentWebhooksRejected
+          # Most deliveries failing signature checks usually means a botched secret rotation.
+          expr: |
+            sum(rate(payment_webhooks_total{namespace="{{ $ns }}", outcome=~"rejected_(mismatch|stale|missing|malformed)"}[10m]))
+            / clamp_min(sum(rate(payment_webhooks_total{namespace="{{ $ns }}"}[10m])), 1e-9) > 0.5
+          for: 15m
+          labels:
+            severity: page
+          annotations:
+            summary: Most payment webhooks are being rejected (check the signing secret)
+
+    - name: {{ $name }}.ticket
+      rules:
+        - alert: CmbApiErrorBudgetBurnSlow
+          expr: cmb:api_error_ratio:rate6h > (6 * 0.001)
+          for: 30m
+          labels:
+            severity: ticket
+          annotations:
+            summary: API error budget is burning steadily (6x over 6 hours)
+
+        - alert: CmbBatchJobFailed
+          expr: kube_job_status_failed{namespace="{{ $ns }}", job_name=~"{{ $name }}-batch-.*"} > 0
+          labels:
+            severity: ticket
+          annotations:
+            summary: The daily batch job failed (it is idempotent; re-run with kubectl create job --from=cronjob/{{ $name }}-batch)
+
+        - alert: CmbBatchJobMissed
+          expr: time() - kube_cronjob_status_last_successful_time{namespace="{{ $ns }}", cronjob="{{ $name }}-batch"} > 26 * 3600
+          labels:
+            severity: ticket
+          annotations:
+            summary: The daily batch job has not succeeded in over 26 hours
+
+        - alert: CmbDbPoolSaturated
+          expr: |
+            sum by (pod) (db_pool_connections{namespace="{{ $ns }}", state="in_use"})
+            / sum by (pod) (db_pool_max_connections{namespace="{{ $ns }}"}) > 0.9
+          for: 15m
+          labels:
+            severity: ticket
+          annotations:
+            summary: Database connection pools are above 90% in use
+
+        - alert: CmbAutoscalerAtMax
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="{{ $ns }}", horizontalpodautoscaler=~"{{ $name }}-.*"}
+            >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="{{ $ns }}", horizontalpodautoscaler=~"{{ $name }}-.*"}
+          for: 30m
+          labels:
+            severity: ticket
+          annotations:
+            summary: An autoscaler has been at its maximum for 30 minutes; raise the limit or investigate
+
+        - alert: CmbPodsRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="{{ $ns }}", pod=~"{{ $name }}-.*"}[1h]) > 3
+          labels:
+            severity: ticket
+          annotations:
+            summary: Pods are restarting repeatedly (OOMKilled or failing liveness)
+{{- end }}
