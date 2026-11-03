@@ -75,7 +75,7 @@ What it does, step by step:
 | 2 | Generates the database password and webhook signing secret into Kubernetes Secrets. Nothing secret is in Git. |
 | 3 | Installs Argo CD from its pinned Helm chart. |
 | 4 | Applies **one** object, [`argocd/root.yaml`](argocd/root.yaml). From here Git is in charge. |
-| 5 | Argo CD syncs in waves: CloudNativePG operator → 3-instance Postgres + PgBouncer → the app (migration first). |
+| 5 | Argo CD syncs in waves: CloudNativePG operator → Postgres (primary + replica) + PgBouncer → the app (migration first). |
 | 6 | Runs [`scripts/smoke-test.sh`](scripts/smoke-test.sh) through the ingress. |
 
 `./scripts/teardown.sh` deletes everything.
@@ -101,7 +101,7 @@ chart/cmb-app/            Helm chart: Deployments, Services, HPAs, PDBs, Ingress
                           migration hook, ExternalSecret, ServiceMonitor, PrometheusRule
 environments/             local.yaml · staging.yaml · prod.yaml (image pin + what differs)
 argocd/                   Argo CD install values, root app-of-apps, child apps (sync waves)
-database/local/           CloudNativePG Cluster (1 primary, 2 replicas) + PgBouncer Poolers
+database/local/           CloudNativePG Cluster (1 primary, 1 replica) + PgBouncer Poolers
 scripts/                  bootstrap, teardown, smoke test, demos
 docs/DECISIONS.md         decisions, delivery, monitoring, assumptions, open questions
 .github/workflows/        validate (lint, schemas, kind smoke test), promote (staging → prod PR)

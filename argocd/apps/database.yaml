@@ -1,4 +1,4 @@
-# Wave 1: a 3-instance Postgres cluster plus PgBouncer poolers, in its own namespace so the
+# Wave 1: a Postgres cluster (primary + replica) plus PgBouncer poolers, in its own namespace so the
 # app reaches it like an external service. Production uses the managed database instead.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

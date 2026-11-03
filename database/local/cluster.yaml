@@ -1,4 +1,5 @@
-# One primary and two streaming replicas. CloudNativePG handles failover: delete the primary
+# One primary and one streaming replica (two instances keep a laptop responsive; a real
+# cluster would run three across zones). CloudNativePG handles failover: delete the primary
 # pod and a replica is promoted within seconds (see the failover demo in the README).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -8,7 +9,7 @@ metadata:
     # The CRD is installed by the cnpg-operator app in an earlier wave.
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  instances: 3
+  instances: 2
   primaryUpdateStrategy: unsupervised
   bootstrap:
     initdb:
