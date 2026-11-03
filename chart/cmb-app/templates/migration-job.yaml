@@ -1,0 +1,42 @@
+{{- if .Values.migrations.enabled }}
+# Runs before every install/upgrade. Argo CD maps these Helm hooks to a PreSync hook, so the
+# Deployments are only updated after the schema migration has succeeded.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cmb-app.fullname" . }}-migrate
+  labels:
+    {{- include "cmb-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "cmb-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # Hooks run before the chart's ServiceAccount exists on first install, so this Job
+      # uses the namespace default account (token mounting is still disabled).
+      {{- include "cmb-app.podBase" . | nindent 6 }}
+      containers:
+        - name: migrate
+          {{- include "cmb-app.containerBase" . | nindent 10 }}
+          command: ["python", "-m", "app.migrate"]
+          env:
+            - name: COMPONENT
+              value: migrate
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name }}
+                  key: DATABASE_URL
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end }}

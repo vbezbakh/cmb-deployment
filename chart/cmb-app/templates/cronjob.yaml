@@ -1,0 +1,46 @@
+{{- if .Values.batch.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cmb-app.fullname" . }}-batch
+  labels:
+    {{- include "cmb-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: batch
+spec:
+  schedule: {{ .Values.batch.schedule | quote }}
+  timeZone: {{ .Values.batch.timeZone }}
+  # Never run two days' jobs at once. The job also takes a database advisory lock,
+  # because CronJobs can very occasionally start the same run twice.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.batch.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "cmb-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: batch
+    spec:
+      backoffLimit: {{ .Values.batch.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.batch.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "cmb-app.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: batch
+        spec:
+          # Keep failed pods around (until the Job is cleaned up) so their logs can be read.
+          restartPolicy: Never
+          serviceAccountName: {{ include "cmb-app.fullname" . }}
+          {{- include "cmb-app.podBase" . | nindent 10 }}
+          containers:
+            - name: batch
+              {{- include "cmb-app.containerBase" . | nindent 14 }}
+              command: ["python", "-m", "app.batch"]
+              env:
+                - name: COMPONENT
+                  value: batch
+                {{- include "cmb-app.secretEnv" (dict "root" . "keys" .Values.batch.secretEnv) | nindent 16 }}
+              resources:
+                {{- toYaml .Values.batch.resources | nindent 16 }}
+{{- end }}
