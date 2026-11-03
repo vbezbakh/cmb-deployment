@@ -4,17 +4,28 @@
 # Safe to re-run: every step skips work that is already done.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-require minikube kubectl helm openssl curl
+require minikube kubectl helm openssl curl jq
 
 ARGOCD_CHART_VERSION=10.11.6 # Argo CD v3.5.6
 KUBERNETES_VERSION=v1.34.0
+CPUS=${MINIKUBE_CPUS:-4}
+MEMORY_MB=${MINIKUBE_MEMORY_MB:-5120}
 
 step "1/6 minikube"
+# minikube silently keeps an existing profile's CPU and memory size and ignores --cpus and
+# --memory, so an old small profile would run this whole stack starved. Refuse instead.
+existing=$(minikube profile list -o json 2>/dev/null |
+  jq -r '.valid[]? | select(.Name == "minikube") | "\(.Config.CPUs) \(.Config.Memory)"')
+if [[ -n "$existing" ]]; then
+  read -r have_cpus have_mb <<<"$existing"
+  if ((have_cpus < CPUS || have_mb < MEMORY_MB)); then
+    die "existing minikube profile has ${have_cpus} CPUs / ${have_mb} MB (needs ${CPUS} / ${MEMORY_MB}); run scripts/teardown.sh first"
+  fi
+fi
 if minikube status >/dev/null 2>&1; then
   ok "cluster already running"
 else
-  minikube start --driver=docker \
-    --cpus="${MINIKUBE_CPUS:-4}" --memory="${MINIKUBE_MEMORY:-5g}" \
+  minikube start --driver=docker --cpus="$CPUS" --memory="$MEMORY_MB" \
     --kubernetes-version="$KUBERNETES_VERSION"
 fi
 minikube addons enable ingress >/dev/null

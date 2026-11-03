@@ -60,7 +60,7 @@ flowchart LR
 
 ## Run it in 5 minutes
 
-**Needs:** Docker (or Colima) with ~6 GB of memory, `minikube`, `kubectl`, `helm`, `openssl`.
+**Needs:** Docker (or Colima) with ~6 GB of memory, `minikube`, `kubectl`, `helm`, `openssl`, `jq`. The script refuses to reuse an existing minikube profile that is smaller than 4 CPUs / 5 GB, because minikube silently keeps an old profile's size.
 
 ```bash
 git clone https://github.com/vbezbakh/cmb-deployment && cd cmb-deployment
