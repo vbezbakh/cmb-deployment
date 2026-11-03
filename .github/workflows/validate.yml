@@ -1,0 +1,104 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUBECONFORM_VERSION: v0.8.0
+  CNPG_CHART_VERSION: 0.29.1
+  # Schemas for CRDs (CNPG, External Secrets, Prometheus Operator, Argo CD).
+  CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+
+jobs:
+  manifests:
+    name: Lint and schema-check every environment
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Install kubeconform
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+      - name: helm lint
+        run: |
+          for env in local staging prod; do
+            helm lint chart/cmb-app --strict -f "environments/${env}.yaml"
+          done
+      - name: Render and validate against Kubernetes 1.34 schemas
+        run: |
+          for env in local staging prod; do
+            echo "::group::${env}"
+            helm template cmb-app chart/cmb-app -n cmb -f "environments/${env}.yaml" \
+              | kubeconform -strict -summary -kubernetes-version 1.34.0 \
+                  -schema-location default -schema-location "$CRD_SCHEMAS"
+            echo "::endgroup::"
+          done
+      - name: Validate Argo CD and database manifests
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.34.0 \
+            -schema-location default -schema-location "$CRD_SCHEMAS" \
+            argocd/root.yaml argocd/apps/ database/local/
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh scripts/demo/*.sh
+
+  smoke:
+    name: Smoke test in a kind cluster
+    needs: manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: smoke
+      - name: Install the CloudNativePG operator
+        run: |
+          helm repo add cnpg https://cloudnative-pg.github.io/charts
+          helm install cnpg cnpg/cloudnative-pg --version "$CNPG_CHART_VERSION" \
+            -n cnpg-system --create-namespace --wait
+      - name: Create secrets
+        run: scripts/create-secrets.sh
+      - name: Start Postgres and PgBouncer (one instance to keep CI fast)
+        run: |
+          yq '.spec.instances = 1' database/local/cluster.yaml | kubectl -n database apply -f -
+          yq 'select(.kind == "Pooler") | .spec.instances = 1' database/local/poolers.yaml | kubectl -n database apply -f -
+          kubectl -n database wait cluster/cmb-pg --for=condition=Ready --timeout=5m
+          kubectl -n database rollout status deployment/cmb-pg-pooler-rw --timeout=3m
+          kubectl -n database rollout status deployment/cmb-pg-pooler-ro --timeout=3m
+      - name: Install the chart with the local values (Helm runs the migration hook first)
+        run: |
+          helm install cmb-app chart/cmb-app -n cmb -f environments/local.yaml \
+            --set ingress.enabled=false --wait --timeout 5m
+      - name: Smoke test
+        run: |
+          kubectl -n cmb port-forward svc/cmb-app-api 8081:80 >/dev/null &
+          kubectl -n cmb port-forward svc/cmb-app-webhooks 8082:80 >/dev/null &
+          sleep 3
+          source scripts/lib.sh
+          API_URL=http://localhost:8081 WEBHOOKS_URL=http://localhost:8082 \
+            WEBHOOK_SECRET="$(webhook_secret)" scripts/smoke-test.sh
+      - name: Graceful shutdown leaves no errors behind
+        run: |
+          kubectl -n cmb rollout restart deployment/cmb-app-api
+          kubectl -n cmb rollout status deployment/cmb-app-api --timeout=3m
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n cmb get events --sort-by=.lastTimestamp | tail -30
+          kubectl -n cmb logs -l app.kubernetes.io/name=cmb-app --all-containers --tail=50 --prefix
+          kubectl -n database get cluster,pooler,pods
