@@ -36,6 +36,7 @@ spec:
           containers:
             - name: batch
               {{- include "cmb-app.containerBase" . | nindent 14 }}
+              {{- include "cmb-app.configEnv" . | nindent 14 }}
               command: ["python", "-m", "app.batch"]
               env:
                 - name: COMPONENT

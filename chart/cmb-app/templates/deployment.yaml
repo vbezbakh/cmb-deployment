@@ -52,6 +52,7 @@ spec:
       containers:
         - name: app
           {{- include "cmb-app.containerBase" $ | nindent 10 }}
+          {{- include "cmb-app.configEnv" $ | nindent 10 }}
           ports:
             - name: http
               containerPort: 8000

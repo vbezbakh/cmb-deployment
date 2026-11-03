@@ -45,18 +45,24 @@ Usage: include "cmb-app.secretEnv" (dict "root" $ "keys" $w.secretEnv)
 {{- end }}
 {{- end -}}
 
-{{/* Settings shared by every container that runs the app image. */}}
+{{/*
+Settings shared by every container that runs the app image. The shared ConfigMap is added
+separately (cmb-app.configEnv) because hook Jobs run before the ConfigMap exists.
+*/}}
 {{- define "cmb-app.containerBase" -}}
 image: {{ include "cmb-app.image" . }}
 imagePullPolicy: {{ .Values.image.pullPolicy }}
-envFrom:
-  - configMapRef:
-      name: {{ include "cmb-app.fullname" . }}
 securityContext:
   {{- toYaml .Values.securityContext | nindent 2 }}
 volumeMounts:
   - name: tmp
     mountPath: /tmp
+{{- end -}}
+
+{{- define "cmb-app.configEnv" -}}
+envFrom:
+  - configMapRef:
+      name: {{ include "cmb-app.fullname" . }}
 {{- end -}}
 
 {{- define "cmb-app.podBase" -}}

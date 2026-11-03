@@ -29,9 +29,12 @@ spec:
         - name: migrate
           {{- include "cmb-app.containerBase" . | nindent 10 }}
           command: ["python", "-m", "app.migrate"]
+          # No envFrom on the shared ConfigMap: hooks run before it is created on first install.
           env:
             - name: COMPONENT
               value: migrate
+            - name: LOG_LEVEL
+              value: {{ .Values.config.LOG_LEVEL | default "INFO" | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
