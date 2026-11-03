@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: validate-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR runs are cancelled; every commit on main gets a complete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   KUBECONFORM_VERSION: v0.8.0
