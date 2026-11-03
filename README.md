@@ -86,11 +86,50 @@ Each demo is one command against the local cluster. Load is generated **inside**
 
 | Demo | What you'll see |
 |---|---|
-| [`scripts/demo/rollout-under-load.sh`](scripts/demo/rollout-under-load.sh) | Every API pod is replaced while 50 req/s flow through the ingress: **100% HTTP 200**. |
-| [`scripts/demo/db-failover.sh`](scripts/demo/db-failover.sh) | The Postgres primary is deleted under write load. A replica is promoted in seconds; the app answers a short burst of 503 + `Retry-After` (never 500) and **no app pod restarts**. |
+| [`scripts/demo/rollout-under-load.sh`](scripts/demo/rollout-under-load.sh) | Every API pod is replaced while 50 req/s flow through the ingress: **3,000 requests, 100% HTTP 200**. |
+| [`scripts/demo/db-failover.sh`](scripts/demo/db-failover.sh) | The Postgres primary crashes under write load. The replica is promoted in ~20s; writes get 503 + `Retry-After` only while there is no primary (never a 500), and **no app pod restarts**. |
 | [`scripts/demo/webhooks.sh`](scripts/demo/webhooks.sh) | A valid delivery is accepted, a redelivery is deduplicated, and tampered, wrongly signed and replayed deliveries are rejected, all counted in `/metrics`. |
-| [`scripts/demo/autoscale.sh`](scripts/demo/autoscale.sh) | Unthrottled load drives CPU up and the HPA scales the API out. |
+| [`scripts/demo/autoscale.sh`](scripts/demo/autoscale.sh) | Unthrottled load: the HPA goes from 2 to 5 pods within 20s; **117k requests, 100% HTTP 200**. |
 | [`scripts/demo/batch.sh`](scripts/demo/batch.sh) | The daily job is run twice for the same day and produces the same rows. |
+
+### Recorded runs
+
+Real runs against the local cluster, recorded with asciinema (pauses shortened to 2s).
+
+<details>
+<summary><b>Rollout under load</b>: 3,000 requests at 50 req/s while every API pod is replaced. 100% HTTP 200, p99 75 ms.</summary>
+
+![Rolling restart of the API under load](docs/recordings/rollout-under-load.gif)
+
+</details>
+
+<details>
+<summary><b>Database failover</b>: primary crashed at 10s, replica promoted ~22s later. 409 of 1,200 writes got 503 (only while there was no primary), 0 errors after promotion, 0 app pod restarts.</summary>
+
+![Postgres primary crash under write load](docs/recordings/db-failover.gif)
+
+</details>
+
+<details>
+<summary><b>Payment webhooks</b>: accepted, deduplicated, and three kinds of forgery rejected.</summary>
+
+![Webhook signature, replay and idempotency checks](docs/recordings/webhooks.gif)
+
+</details>
+
+<details>
+<summary><b>Autoscaling</b>: 2 → 5 pods within 20s. 117,257 requests at 651 req/s, 100% HTTP 200, p99 93 ms.</summary>
+
+![HPA scaling the API under load](docs/recordings/autoscale.gif)
+
+</details>
+
+<details>
+<summary><b>Daily batch job</b>: run twice for the same day, same rows, nothing double counted.</summary>
+
+![Idempotent batch job](docs/recordings/batch.gif)
+
+</details>
 
 To ship a change and watch it roll out: merge to `cmb-application` main, wait for CI to commit the new tag here, then watch Argo CD (`kubectl -n argocd port-forward svc/argocd-server 8443:80`) roll it out within a minute.
 
